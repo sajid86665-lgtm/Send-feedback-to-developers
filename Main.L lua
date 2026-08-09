@@ -17,6 +17,11 @@ local context = activity or service
 local mainHandler = Handler(Looper.getMainLooper())
 local loadingDialog = nil
 
+-- Plugin metadata
+local PLUGIN_NAME = "Send Feedback to Developers"
+local PLUGIN_AUTHOR = "sajid86665"
+local PLUGIN_DESC = "This plugin allows you to send feedback to developers via WhatsApp or Telegram. It also includes an auto-update feature."
+
 -- Version file (auto‑created)
 local VERSION_URL = "https://raw.githubusercontent.com/sajid86665-lgtm/Send-feedback-to-developers/main/Virgin.Txt"
 local UPDATE_CODE_URL = "https://raw.githubusercontent.com/sajid86665-lgtm/Send-feedback-to-developers/main/Main.L%20lua"
@@ -129,6 +134,18 @@ function checkUpdate()
                                 run = function()
                                     hideLoading()
                                     
+                                    -- Parse changelog lines
+                                    local changelogLines = {}
+                                    for line in string.gmatch(changeLogText, "([^\n]*)\n?") do
+                                        local trimmed = trim(line)
+                                        if trimmed ~= "" then
+                                            table.insert(changelogLines, trimmed)
+                                        end
+                                    end
+                                    if #changelogLines == 0 then
+                                        table.insert(changelogLines, "No changelog available.")
+                                    end
+                                    
                                     local updateViews = {}
                                     local updateLayout = {
                                         ScrollView,
@@ -206,10 +223,11 @@ function checkUpdate()
                                                 paddingBottom = "5dp"
                                             },
                                             {
-                                                TextView,
-                                                text = changeLogText,
-                                                textSize = 13,
-                                                textColor = "#444444",
+                                                LinearLayout,
+                                                id = "changelogContainer",
+                                                orientation = "vertical",
+                                                layout_width = "fill",
+                                                layout_height = "wrap",
                                                 paddingBottom = "20dp"
                                             },
                                             {
@@ -226,6 +244,19 @@ function checkUpdate()
                                     local updateAlertDlg = LuaDialog(context)
                                     updateAlertDlg.setTitle("Update Available!")
                                     updateAlertDlg.setView(loadlayout(updateLayout, updateViews))
+                                    
+                                    -- Add each changelog line as separate TextView
+                                    local container = updateViews.changelogContainer
+                                    if container then
+                                        for _, line in ipairs(changelogLines) do
+                                            local tv = TextView(context)
+                                            tv.setText(line)
+                                            tv.setTextSize(13)
+                                            tv.setTextColor(Color.parseColor("#444444"))
+                                            tv.setPadding(0, 4, 0, 4)
+                                            container.addView(tv)
+                                        end
+                                    end
                                     
                                     updateViews.updateBtn.setOnClickListener(function()
                                         updateAlertDlg.dismiss()
@@ -343,11 +374,26 @@ function performUpdate(mainCode, onlineVersion)
     }).start()
 end
 
--- ====== UI (feedback form with email field) ======
+-- ====== UI with main menu ======
 local windows = {}
 local dlg = nil
 local navStack = {}
 
+-- Main menu (window 0) - Home screen
+windows[0] = {
+  title = PLUGIN_NAME,   -- Real name displayed as title
+  elements = {
+    { type = "title" },
+    { type = "textview", text = PLUGIN_DESC },
+    { type = "textview", text = "Current Version: " .. getCurrentVersion(), id = "versionHome" }, -- dynamic version
+    { type = "textview", text = "────────────────────" }, -- separator
+    { type = "button", label = "Send Feedback", targetId = 1 },
+    { type = "button", label = "About", targetId = 2 },
+    { type = "button", label = "Exit", targetId = nil, isExit = true }, -- exit button
+  }
+}
+
+-- Feedback form (window 1)
 windows[1] = {
   title = "feedback to developers",
   elements = {
@@ -359,9 +405,23 @@ windows[1] = {
     { type = "checkbox", label = "I have Telegram" },
     { type = "edittext", hint = "enter your telegram user name" },
     { type = "edittext", hint = "Enter your WhatsApp mobile number" },
-    { type = "edittext", hint = "Enter your email address" },  -- optional email
+    { type = "edittext", hint = "Enter your email address" },  -- optional
     { type = "edittext", hint = "Enter your feedback" },
     { type = "button", label = "Send feedback", targetId = nil },
+    { type = "button", label = "Back", targetId = 0 },
+  }
+}
+
+-- About screen (window 2)
+windows[2] = {
+  title = "About",
+  elements = {
+    { type = "title" },
+    { type = "textview", text = "Plugin: " .. PLUGIN_NAME },
+    { type = "textview", text = "Version: (will be updated)", id = "versionView" },
+    { type = "textview", text = "Author: " .. PLUGIN_AUTHOR },
+    { type = "textview", text = "Description: " .. PLUGIN_DESC },
+    { type = "textview", text = "Path: " .. PLUGIN_DIR },
     { type = "button", label = "Back", targetId = 0 },
   }
 }
@@ -408,6 +468,7 @@ showScreen = function(id, isBack)
   local whatsappEditText = nil
   local emailEditText = nil
   local feedbackEditText = nil
+  local versionTextView = nil
 
   for _, elem in ipairs(winData.elements) do
     if elem.type == "title" then
@@ -420,7 +481,16 @@ showScreen = function(id, isBack)
     elseif elem.type == "button" then
       local b = Button(service)
       b.setText(elem.label)
-      if elem.label == "Send feedback" then
+      if elem.isExit then
+        -- Exit button: use dlg.dismiss() as per sample code
+        b.setOnClickListener(function()
+            if dlg then dlg.dismiss() end
+            -- optional: finish activity if exists
+            if activity then
+                activity.finish()
+            end
+        end)
+      elseif elem.label == "Send feedback" then
         b.setOnClickListener(function()
           local nameVal = nameEditText and nameEditText.getText().toString() or ""
           local genderVal = genderSpinner and genderSpinner.getSelectedItem() or ""
@@ -448,7 +518,7 @@ showScreen = function(id, isBack)
             return
           end
 
-          -- Save email if entered (for future auto‑fill)
+          -- Save email if entered
           if emailVal ~= "" then
             saveSettings(emailVal)
           end
@@ -461,7 +531,6 @@ showScreen = function(id, isBack)
             msg = msg .. "Telegram: " .. telegramVal .. "\n\n\n"
           end
 
-          -- Include email if provided
           if emailVal ~= "" then
             msg = msg .. "Email: " .. emailVal .. "\n\n\n"
           end
@@ -550,7 +619,14 @@ showScreen = function(id, isBack)
       end
     elseif elem.type == "textview" then
       local t = TextView(service)
-      t.setText(elem.text)
+      if elem.id == "versionView" then
+        versionTextView = t
+        t.setText("Version: " .. getCurrentVersion())
+      elseif elem.id == "versionHome" then
+        t.setText("Current Version: " .. getCurrentVersion())
+      else
+        t.setText(elem.text)
+      end
       t.setTextColor(Color.WHITE)
       container.addView(t)
     elseif elem.type == "combobox" then
@@ -599,7 +675,8 @@ showScreen = function(id, isBack)
   dlg.show()
 end
 
-showScreen(1, false)
+-- Start with main menu (window 0)
+showScreen(0, false)
 
 -- Start update check in background
 Thread(luajava.bindClass("java.lang.Runnable"){
