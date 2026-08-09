@@ -1,11 +1,316 @@
 require "import"
+import "com.androlua.Http"
+import "cjson"
+import "com.androlua.LuaDialog"
 import "android.widget.*"
 import "android.view.*"
 import "android.graphics.Color"
+import "android.content.Context"
 import "android.content.DialogInterface"
 import "android.content.Intent"
 import "android.net.Uri"
-import "android.os.Handler"
+import "android.os.*"
+import "android.graphics.Typeface"
+import "java.io.*"
+
+local context = activity or service
+local mainHandler = Handler(Looper.getMainLooper())
+local loadingDialog = nil
+
+local CURRENT_VERSION = "1.0"
+local VERSION_URL = "https://raw.githubusercontent.com/sajid86665-lgtm/Send-feedback-to-developers/main/Virgin.Txt"
+local UPDATE_CODE_URL = "https://raw.githubusercontent.com/sajid86665-lgtm/Send-feedback-to-developers/main/Main.L%20lua"
+local WHATS_NEW_URL = "https://raw.githubusercontent.com/sajid86665-lgtm/Send-feedback-to-developers/main/What%27s%20new"
+local PLUGIN_DIR = "/storage/emulated/0/解说/Plugins/Send feedback to developers/"
+local PLUGIN_PATH = PLUGIN_DIR .. "main.lua"
+local updateInProgress = false
+local prefs = context.getSharedPreferences("FeedbackDev_Prefs", Context.MODE_PRIVATE)
+
+pcall(function()
+    Http.setConnTimeout(60000)
+    Http.setReadTimeout(60000)
+end)
+
+local userEmail = ""
+
+function trim(s)
+    if s == nil then return "" end
+    return tostring(s):gsub("^%s*(.-)%s*$", "%1")
+end
+
+function loadSettings()
+    userEmail = prefs.getString("email", "")
+end
+
+function saveSettings(email)
+    local editor = prefs.edit()
+    editor.putString("email", email)
+    editor.apply()
+end
+
+function showLoading(message)
+    mainHandler.post(Runnable({
+        run = function()
+            if loadingDialog then
+                pcall(function() loadingDialog.dismiss() end)
+            end
+            loadingDialog = LuaDialog(context)
+            loadingDialog.setTitle("Please Wait")
+            loadingDialog.setMessage(message or "Loading...")
+            loadingDialog.setCancelable(false)
+            loadingDialog.show()
+        end
+    }))
+end
+
+function hideLoading()
+    mainHandler.post(Runnable({
+        run = function()
+            if loadingDialog then
+                pcall(function() loadingDialog.dismiss() end)
+                loadingDialog = nil
+            end
+        end
+    }))
+end
+
+function showUpdateErrorDialog(title, message)
+    mainHandler.post(Runnable({
+        run = function()
+            hideLoading()
+            local errorDialog = LuaDialog(context)
+            errorDialog.setTitle(title)
+            errorDialog.setMessage(message)
+            errorDialog.setButton("OK", function()
+                errorDialog.dismiss()
+            end)
+            errorDialog.show()
+        end
+    }))
+end
+
+function checkUpdate()
+    if updateInProgress then
+        return
+    end
+    
+    local timestamp = tostring(os.time())
+    Http.get(VERSION_URL .. "?t=" .. timestamp, function(code, response)
+        if code == 200 and response then
+            local onlineVersion = trim(response):match("([%d%.]+)") or trim(response)
+            if onlineVersion ~= "" and onlineVersion ~= CURRENT_VERSION then
+                Http.get(UPDATE_CODE_URL .. "?t=" .. timestamp, function(code2, mainCode)
+                    if code2 == 200 and mainCode and trim(mainCode) ~= "" then
+                        Http.get(WHATS_NEW_URL .. "?t=" .. timestamp, function(code3, whatsNewContent)
+                            local changeLogText = (code3 == 200 and whatsNewContent and trim(whatsNewContent) ~= "") and trim(whatsNewContent) or "No changelog available."
+                            
+                            mainHandler.post(Runnable({
+                                run = function()
+                                    hideLoading()
+                                    
+                                    local updateViews = {}
+                                    local updateLayout = {
+                                        ScrollView,
+                                        layout_width = "fill",
+                                        layout_height = "wrap_content",
+                                        {
+                                            LinearLayout,
+                                            orientation = "vertical",
+                                            padding = "20dp",
+                                            layout_width = "fill",
+                                            layout_height = "wrap",
+                                            {
+                                                Button,
+                                                id = "dismissBtn",
+                                                text = "Dismiss update dialog",
+                                                layout_width = "fill",
+                                                layout_height = "wrap",
+                                                layout_marginBottom = "15dp"
+                                            },
+                                            {
+                                                TextView,
+                                                text = "A new version of the extension is available!",
+                                                textSize = 15,
+                                                textColor = "#333333",
+                                                paddingBottom = "15dp"
+                                            },
+                                            {
+                                                LinearLayout,
+                                                orientation = "horizontal",
+                                                layout_width = "fill",
+                                                layout_height = "wrap",
+                                                paddingBottom = "10dp",
+                                                {
+                                                    TextView,
+                                                    text = "Current Version: ",
+                                                    textSize = 14,
+                                                    textColor = "#666666",
+                                                    typeface = Typeface.DEFAULT_BOLD
+                                                },
+                                                {
+                                                    TextView,
+                                                    text = CURRENT_VERSION,
+                                                    textSize = 14,
+                                                    textColor = "#D32F2F",
+                                                    typeface = Typeface.DEFAULT_BOLD
+                                                }
+                                            },
+                                            {
+                                                LinearLayout,
+                                                orientation = "horizontal",
+                                                layout_width = "fill",
+                                                layout_height = "wrap",
+                                                paddingBottom = "15dp",
+                                                {
+                                                    TextView,
+                                                    text = "Server Version: ",
+                                                    textSize = 14,
+                                                    textColor = "#666666",
+                                                    typeface = Typeface.DEFAULT_BOLD
+                                                },
+                                                {
+                                                    TextView,
+                                                    text = onlineVersion,
+                                                    textSize = 14,
+                                                    textColor = "#2E7D32",
+                                                    typeface = Typeface.DEFAULT_BOLD
+                                                }
+                                            },
+                                            {
+                                                TextView,
+                                                text = "What's New:",
+                                                textSize = 14,
+                                                textColor = "#1976D2",
+                                                typeface = Typeface.DEFAULT_BOLD,
+                                                paddingBottom = "5dp"
+                                            },
+                                            {
+                                                TextView,
+                                                text = changeLogText,
+                                                textSize = 13,
+                                                textColor = "#444444",
+                                                paddingBottom = "20dp"
+                                            },
+                                            {
+                                                Button,
+                                                id = "updateBtn",
+                                                text = "Update",
+                                                layout_width = "fill",
+                                                layout_height = "wrap",
+                                                layout_marginTop = "10dp"
+                                            }
+                                        }
+                                    }
+                                    
+                                    local updateAlertDlg = LuaDialog(context)
+                                    updateAlertDlg.setTitle("Update Available!")
+                                    updateAlertDlg.setView(loadlayout(updateLayout, updateViews))
+                                    
+                                    updateViews.updateBtn.setOnClickListener(function()
+                                        updateAlertDlg.dismiss()
+                                        performUpdate(mainCode, onlineVersion)
+                                    end)
+                                    
+                                    updateViews.dismissBtn.setOnClickListener(function()
+                                        updateAlertDlg.dismiss()
+                                    end)
+                                    
+                                    updateAlertDlg.show()
+                                end
+                            }))
+                        end)
+                    end
+                end)
+            end
+        end
+    end)
+end
+
+function performUpdate(mainCode, onlineVersion)
+    if not mainCode or trim(mainCode) == "" then
+        showUpdateErrorDialog("Update Failed", "Main extension code is empty.")
+        return
+    end
+    
+    updateInProgress = true
+    showLoading("Updating extension to v" .. onlineVersion .. "...")
+    
+    local function updateProcess()
+        local success = false
+        pcall(function()
+            local dir = File(PLUGIN_DIR)
+            if not dir.exists() then
+                dir.mkdirs()
+            end
+        end)
+        
+        local f = io.open(PLUGIN_PATH, "w")
+        if f then
+            f:write(mainCode)
+            f:close()
+            success = true
+        else
+            local tempPath = PLUGIN_PATH .. ".temp_update"
+            local tf = io.open(tempPath, "w")
+            if tf then
+                tf:write(mainCode)
+                tf:close()
+                pcall(function() os.remove(PLUGIN_PATH) end)
+                local renameOk = pcall(function() os.rename(tempPath, PLUGIN_PATH) end)
+                if renameOk then
+                    success = true
+                else
+                    pcall(function() os.remove(tempPath) end)
+                end
+            end
+        end
+        
+        if success then
+            updateInProgress = false
+            mainHandler.post(Runnable({
+                run = function()
+                    hideLoading()
+                    local successDialog = LuaDialog(context)
+                    successDialog.setTitle("Update Successful")
+                    successDialog.setMessage("Extension successfully updated to version " .. onlineVersion .. ".\n\nClick OK to restart.")
+                    successDialog.setButton("OK", function()
+                        pcall(function() successDialog.dismiss() end)
+                        pcall(function() 
+                            if dlg then 
+                                dlg.dismiss() 
+                                dlg = nil
+                            end 
+                        end)
+                        navStack = {}
+                        
+                        mainHandler.postDelayed(Runnable({
+                            run = function()
+                                local pluginFile = io.open(PLUGIN_PATH, "r")
+                                if pluginFile then
+                                    pluginFile:close()
+                                    local func, err = loadfile(PLUGIN_PATH)
+                                    if func then
+                                        pcall(func)
+                                    else
+                                        Toast.makeText(context, "Error reloading: " .. tostring(err), Toast.LENGTH_SHORT).show()
+                                    end
+                                end
+                            end
+                        }), 500)
+                    end)
+                    successDialog.show()
+                end
+            }))
+        else
+            updateInProgress = false
+            showUpdateErrorDialog("Update Failed", "Could not write file. Please check storage permission or path.")
+        end
+    end
+    
+    Thread(luajava.bindClass("java.lang.Runnable"){
+        run = updateProcess
+    }).start()
+end
 
 local windows = {}
 local dlg = nil
@@ -22,6 +327,7 @@ windows[1] = {
     { type = "checkbox", label = "I have Telegram" },
     { type = "edittext", hint = "enter your telegram user name" },
     { type = "edittext", hint = "Enter your WhatsApp mobile number" },
+    { type = "edittext", hint = "Enter your email address" },
     { type = "edittext", hint = "Enter your feedback" },
     { type = "button", label = "Send feedback", targetId = nil },
     { type = "button", label = "Back", targetId = 0 },
@@ -56,7 +362,9 @@ showScreen = function(id, isBack)
       }
     }
   }
-  if dlg then dlg.dismiss() end
+  if dlg then 
+      pcall(function() dlg.dismiss() end)
+  end
   dlg = LuaDialog(service)
   dlg.View = loadlayout(layout)
   
@@ -66,6 +374,7 @@ showScreen = function(id, isBack)
   local telegramCheckbox = nil
   local telegramEditText = nil
   local whatsappEditText = nil
+  local emailEditText = nil
   local feedbackEditText = nil
 
   for _, elem in ipairs(winData.elements) do
@@ -87,6 +396,7 @@ showScreen = function(id, isBack)
           local hasTelegram = telegramCheckbox and telegramCheckbox.isChecked() or false
           local telegramVal = telegramEditText and telegramEditText.getText().toString() or ""
           local whatsappVal = whatsappEditText and whatsappEditText.getText().toString() or ""
+          local emailVal = emailEditText and emailEditText.getText().toString() or ""
           local feedbackVal = feedbackEditText and feedbackEditText.getText().toString() or ""
 
           if nameVal == "" then
@@ -106,12 +416,20 @@ showScreen = function(id, isBack)
             return
           end
 
+          if emailVal ~= "" then
+            saveSettings(emailVal)
+          end
+
           local msg = "NEW FEEDBACK RECEIVED\n\n\n" ..
                       "Name: " .. nameVal .. "\n\n\n" ..
                       "Gender: " .. tostring(genderVal) .. "\n\n\n"
 
           if hasTelegram and telegramVal ~= "" then
             msg = msg .. "Telegram: " .. telegramVal .. "\n\n\n"
+          end
+
+          if emailVal ~= "" then
+            msg = msg .. "Email: " .. emailVal .. "\n\n\n"
           end
 
           msg = msg .. "WhatsApp: " .. whatsappVal .. "\n\n\n" ..
@@ -152,31 +470,6 @@ showScreen = function(id, isBack)
         end)
       end
       container.addView(b)
-    elseif elem.type == "clickable" then
-      local l = LinearLayout(service)
-      l.setOrientation(LinearLayout.VERTICAL)
-      l.setPadding(20, 20, 20, 20)
-      l.setClickable(true)
-      l.setFocusable(true)
-      local t = TextView(service)
-      t.setText(elem.label)
-      t.setTextColor(Color.WHITE)
-      l.addView(t)
-      l.setOnClickListener(function()
-        if elem.targetId == 0 then
-          if #navStack > 1 then
-            table.remove(navStack)
-            local prevId = navStack[#navStack]
-            table.remove(navStack)
-            showScreen(prevId, false)
-          else
-            if dlg then dlg.dismiss() end
-          end
-        elseif elem.targetId and windows[elem.targetId] then
-          showScreen(elem.targetId, false)
-        end
-      end)
-      container.addView(l)
     elseif elem.type == "edittext" then
       local e = EditText(service)
       if elem.hint and elem.hint ~= "" then
@@ -192,6 +485,12 @@ showScreen = function(id, isBack)
         e.setVisibility(View.GONE)
       elseif elem.hint == "Enter your WhatsApp mobile number" then
         whatsappEditText = e
+      elseif elem.hint == "Enter your email address" then
+        emailEditText = e
+        loadSettings()
+        if userEmail ~= "" then
+          e.setText(userEmail)
+        end
       elseif elem.hint == "Enter your feedback" then
         feedbackEditText = e
       end
@@ -220,28 +519,6 @@ showScreen = function(id, isBack)
       t.setText(elem.text)
       t.setTextColor(Color.WHITE)
       container.addView(t)
-    elseif elem.type == "slider" then
-      if elem.label and elem.label ~= "" then
-        local t = TextView(service)
-        t.setText(elem.label)
-        t.setTextColor(Color.WHITE)
-        container.addView(t)
-      end
-      local s = SeekBar(service)
-      s.setMax(100)
-      container.addView(s)
-    elseif elem.type == "linkbutton" then
-      local b = Button(service)
-      b.setText(elem.label)
-      b.setOnClickListener(function()
-        if dlg then dlg.dismiss() end
-        pcall(function()
-          local intent = Intent(Intent.ACTION_VIEW, Uri.parse(elem.url))
-          intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-          service.startActivity(intent)
-        end)
-      end)
-      container.addView(b)
     elseif elem.type == "combobox" then
       if elem.label and elem.label ~= "" then
         local t = TextView(service)
@@ -266,23 +543,9 @@ showScreen = function(id, isBack)
       elseif elem.label and elem.label:match("send feedback via") then
         mediumSpinner = s
       end
-    elseif elem.type == "togglebutton" then
-      local b = Button(service)
-      local opts = {}
-      for opt in string.gmatch(elem.options or "", "[^,]+") do
-        local trimmed = opt:match("^%s*(.-)%s*$")
-        if trimmed ~= "" then table.insert(opts, trimmed) end
-      end
-      if #opts == 0 then table.insert(opts, "Option 1") end
-      local idx = 1
-      b.setText(opts[idx])
-      b.setOnClickListener(function()
-        idx = (idx % #opts) + 1
-        b.setText(opts[idx])
-      end)
-      container.addView(b)
     end
   end
+
   dlg.setOnKeyListener(DialogInterface.OnKeyListener{
     onKey = function(dialog, keyCode, event)
       if keyCode == KeyEvent.KEYCODE_BACK and event.getAction() == KeyEvent.ACTION_UP then
@@ -302,40 +565,10 @@ showScreen = function(id, isBack)
   dlg.show()
 end
 
-local loadingLayout = {
-  LinearLayout,
-  orientation = "vertical",
-  layout_width = "fill",
-  layout_height = "fill",
-  backgroundColor = Color.parseColor("#121212"),
-  gravity = Gravity.CENTER,
-  padding = "16dp",
-  {
-    ProgressBar,
-    layout_width = "wrap",
-    layout_height = "wrap",
-    indeterminate = true,
-  },
-  {
-    TextView,
-    text = "Loading application...",
-    textColor = Color.WHITE,
-    textSize = 18,
-    gravity = Gravity.CENTER,
-    layout_marginTop = "16dp",
-  }
-}
+showScreen(1, false)
 
-local loadingDlg = LuaDialog(service)
-loadingDlg.View = loadlayout(loadingLayout)
-loadingDlg.setCancelable(false)
-loadingDlg.show()
-
-Handler().postDelayed(Runnable({
-  run = function()
-    if loadingDlg then
-      loadingDlg.dismiss()
+Thread(luajava.bindClass("java.lang.Runnable"){
+    run = function()
+        checkUpdate()
     end
-    showScreen(1, false)
-  end
-}), 1500)
+}).start()
